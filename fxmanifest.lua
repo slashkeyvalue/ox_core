@@ -38,6 +38,12 @@ server_scripts {
     'server/class.lua',
     'server/init.lua',
     'server/debug.lua',
+
+    'code/server-common/ox.lua',
+    'code/server-common/session.lua',
+    'code/server-common/session_factory.lua',
+
+    'code/server-core/session_service.lua',
 }
 
 ui_page 'web/build/index.html'
