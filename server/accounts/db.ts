@@ -72,7 +72,7 @@ async function startAccountTransactionInternal<TParams extends AccountTransactio
 {
   await conn.startTransaction( async ( tx ) =>
   {
-    await conn.update( addBalance, [ params.amount, params.accountId ] )
+    await tx.update( addBalance, [ params.amount, params.accountId ] )
 
     await tx.execute( addTransaction, [
       params.actorId,
