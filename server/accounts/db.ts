@@ -59,6 +59,118 @@ export async function UpdateBalance(
   );
 }
 
+interface AccountTransactionStartParams
+{
+  accountId: number;
+  amount: number;
+  message?: string;
+  note?: string;
+  actorId?: number;
+}
+
+async function startAccountTransactionInternal<TParams extends AccountTransactionStartParams, TResult>( conn: Connection, params: TParams/*, handler: () => Promise<TResult> */ )
+{
+  await conn.startTransaction( async ( tx ) =>
+  {
+    await conn.update( addBalance, [ params.amount, params.accountId ] )
+
+    await tx.execute( addTransaction, [
+      params.actorId,
+      params.accountId,
+      params.accountId,
+      params.amount,
+      params.message ?? locales( 'transfer' ),
+      params.note,
+      null,
+      null,
+    ]);
+  });
+}
+
+// #
+
+async function startAccountTransactionRemoveBalance( conn: Connection, params: AccountTransactionStartParams )
+{
+  params.amount = -Math.abs( params.amount );
+
+  await startAccountTransactionInternal( conn, params );
+}
+
+async function startAccountTransactionRemoveBalanceWithDebit( conn: Connection, params: AccountTransactionStartParams )
+{
+  conn.startTransaction( async ( tx ) =>
+  {
+    await startAccountTransactionRemoveBalance( tx, params );
+
+    // add debit!
+  });
+}
+
+async function startAccountTransactionAddBalance( conn: Connection, params: AccountTransactionStartParams )
+{
+  params.amount = Math.abs( params.amount );
+
+  await startAccountTransactionInternal( conn, params );
+}
+
+// #
+
+interface AccountOperationStartParams extends Omit<AccountTransactionStartParams, 'accountId'>
+{
+  paramsAccountFrom: Pick<AccountTransactionStartParams, 'accountId'>;
+  paramsAccountTo  : Pick<AccountTransactionStartParams, 'accountId'>;
+}
+
+function startAccountOperation( conn: Connection, { paramsAccountFrom, paramsAccountTo, ...transactionParams }: AccountOperationStartParams )
+{
+  console.assert( transactionParams.amount > 0 );
+
+  return conn.startTransaction( async ( tx ) =>
+  {
+    await startAccountTransactionRemoveBalance( tx, { ...transactionParams, ...paramsAccountFrom } );
+
+    await startAccountTransactionAddBalance   ( tx, { ...transactionParams, ...paramsAccountTo   } );
+  });
+}
+
+// #
+
+RegisterCommand('operation', async () =>
+{
+  console.log('operation=')
+
+  const conn = await GetConnection();
+
+  try
+  {
+    await startAccountOperation( conn, {
+      amount: 1000,
+      message: 'Test',
+      note: 'Test',
+      actorId: 1,
+
+      paramsAccountFrom: { accountId: 442411284 },
+      paramsAccountTo  : { accountId: 442411284 },
+    });
+
+    // await startAccountTransactionRemoveBalance( conn, {
+    //   accountId: 442411284,
+    //   amount: 1000,
+    //   message: 'Test',
+    //   note: 'Test',
+    //   actorId: 1,
+    // });
+
+    console.log( 'Operation succeded!' );
+  }
+  catch ( e )
+  {
+    console.log( e );
+
+    console.log( 'An error occurred while performing this operation!' );
+  }
+}, false);
+
 export async function PerformTransaction(
   fromId: number,
   toId: number,
@@ -73,36 +185,45 @@ export async function PerformTransaction(
   const fromBalance = await conn.scalar<number>(getBalance, [fromId]);
   const toBalance = await conn.scalar<number>(getBalance, [toId]);
 
+  console.log('toBalance', fromBalance, toBalance)
+
   if (fromBalance === null || toBalance === null) return 'no_balance';
 
   await conn.beginTransaction();
 
+  console.log('starting transaction')
+
   try {
-    const a = await conn.update(overdraw ? removeBalance : safeRemoveBalance, [amount, fromId, amount]);
-    const b = await conn.update(addBalance, [amount, toId]);
+    // const b = await conn.update(addBalance, [amount, toId]);
 
-    if (a && b) {
-      await conn.execute(addTransaction, [
-        actorId,
-        fromId,
-        toId,
-        amount,
-        message ?? locales('transfer'),
-        note,
-        fromBalance - amount,
-        toBalance + amount,
-      ]);
+    await conn.update( removeBalance, [ amount, fromId ]);
 
-      return true;
-    }
-  } catch (e) {
+    await conn.execute(addTransaction, [
+      actorId,
+      fromId,
+      toId,
+      amount,
+      message ?? locales('transfer'),
+      note,
+      fromBalance - amount,
+      toBalance + amount,
+    ]);
+
+    await conn.commit();
+  }
+  catch (e)
+  {
+    conn.rollback();
+
+    console.log('thanks!')
+
     console.error(`Failed to transfer $${amount} from account<${fromId}> to account<${toId}>`);
     console.log(e);
+
+    return false;
   }
 
-  conn.rollback();
-
-  return false;
+  return true;
 }
 
 export async function SelectAccounts(column: 'owner' | 'group' | 'id', id: number | string) {

@@ -71,6 +71,26 @@ export class Connection {
     return this.connection.commit();
   }
 
+  async startTransaction<TReturn>( handler: ( tx: Connection ) => Promise<TReturn> )
+  {
+    try
+    {
+      await this.beginTransaction();
+  
+      const result = await handler( this );
+  
+      this.commit()
+  
+      return result;
+    }
+    catch ( err )
+    {
+      this.rollback();
+      
+      throw err;
+    }
+  }
+
   [Symbol.dispose]() {
     if (this.transaction) this.commit();
     this.connection.release();
